@@ -6,9 +6,12 @@ const socket = new io();
 const IndexPage = () => {
   const [summary, setSummary] = useState('');
   const [hasGame, setHasGame] = useState(false);
+  const [link, setLink] = useState('');
+
   useEffect(() => {
     socket.on('summary', summary => {
       setSummary(summary);
+      setLink(`http://${window.location.host}/game?room=${summary.name}`);
 
       if (!!summary.name) {
         setHasGame(true);
@@ -18,6 +21,7 @@ const IndexPage = () => {
     socket.on('end', () => {
       setHasGame(false);
     });
+
   }, []);
 
   const newGame = () => socket.emit('new');
@@ -35,6 +39,7 @@ const IndexPage = () => {
       {hasGame && roundRunning && <button onClick={stopRound}>Stop round!</button>}
       <pre>{JSON.stringify(summary, null, 2)}</pre>
       {hasGame && <a href={`/game?room=${summary.name}`}>Game</a>}
+      {hasGame && <p>{link}</p>}
     </>
   );
 };
