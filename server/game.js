@@ -1,7 +1,14 @@
+/**
+ */
 class Game {
 
   static games = new Map();
   static count = 0;
+  /** @type {Map<string, SocketIO.Socket>} */
+  players = new Map();
+  rounds = [];
+  name;
+
   /**
    *
    * @param {SocketIO.Namespace} nsp
@@ -13,24 +20,73 @@ class Game {
   }
 
   init = () => {
-    const name = `/game${++Game.count}`;
+    const name = `game${++Game.count}`;
     Game.games.set(name, this);
-    this.nsp = this.master.server.of(name);
     this.name = name;
-    this.players = new Set();
-    this.rounds = [];
 
-    this.addListeners();
+    this.addMasterListeners();
     this.sendSummary();
   };
 
-  addListeners = () => {
-    this.master.on('stop', this.close);
-    this.nsp.on('connection', this.onConnection);
+  /**
+   * @param {SocketIO.Socket} player
+   */
+  addPlayer = player => {
+    player.join(this.name, (err) => {
+      if (err) throw err;
+      this.players.set(player.id, player);
+      player.on('disconnect', () => this.onDisconnection(player.id));
+      player.on('pick', value => this.pick(player.id, value));
 
+      this.sendSummary();
+    });
+  };
+
+  onDisconnection = id => {
+    this.players.delete(id);
+
+    this.sendSummary();
+  };
+
+  addMasterListeners = () => {
+    this.master.on('stop', this.close);
     this.master.on('startRound', this.newRound);
     this.master.on('stopRound', this.reveal);
   };
+
+  removeMasterListeners = () => {
+    this.master.removeListener('stop', this.close);
+    this.master.removeListener('startRound', this.newRound);
+    this.master.removeListener('stopRound', this.reveal);
+  };
+
+  close = () => {
+    this.players.forEach(player => {
+      player.leave(this.name, err => {
+        if (err) throw err;
+
+        player.emit('end');
+      });
+    });
+
+    this.master.emit('end');
+    this.removeMasterListeners();
+    Game.games.delete(this.name);
+  };
+
+  sendSummary = () => {
+    this.master.emit('summary', this.getSummary());
+    this.master.in(this.name).emit('roundUpdate', this.getSummary(true));
+  };
+
+  getSummary = (hideMoves = false) => ({
+    name: this.name,
+    players: [...this.players.keys()],
+    rounds: this.rounds.map(round => ({
+      ...round,
+      moves: hideMoves && round.running ? this.hideMoves(round.moves) : round.moves,
+    }))
+  });
 
   getCurrentRound = () => {
     const current = this.rounds.length && this.rounds[this.rounds.length -1];
@@ -41,6 +97,12 @@ class Game {
   };
 
   newRound = () => {
+    const current = this.getCurrentRound();
+
+    if (!!current) {
+      return;
+    }
+
     this.rounds.push({
       moves: {},
       running: true,
@@ -61,39 +123,10 @@ class Game {
     this.sendSummary();
   }
 
-  sendSummary = () => {
-    this.master.emit('summary', this.getSummary());
-    this.nsp.emit('roundUpdate', this.getSummary(true));
-  };
-
-  getSummary = (hideMoves = false) => ({
-    name: this.name,
-    players: [...this.players],
-    rounds: this.rounds.map(round => ({
-      ...round,
-      moves: hideMoves && round.running ? this.hideMoves(round.moves) : round.moves,
-    }))
-  });
-
   hideMoves = moves => Object.keys(moves).reduce((p, n) => ({ ...p, [n]: null}), {});
-
-  close = () => {
-    Object.entries(this.nsp.sockets).forEach(player => {
-      player.disconnect();
-    });
-  };
-
-  onConnection = player => {
-    this.players.add(player.id);
-    player.on('disconnect', () => this.onDisconnection(player.id));
-    player.on('pick', value => this.pick(player.id, value));
-
-    this.sendSummary();
-  };
 
   pick = (id, value) => {
     const current = this.getCurrentRound();
-    console.log(current, id, value)
 
     if (!current || !!current.moves[id]) {
       return;
@@ -102,19 +135,12 @@ class Game {
     current.moves[id] = value;
 
     const playersWhoPicked = Object.keys(current.moves);
-    if ([...this.players].every(p => playersWhoPicked.includes(p))) {
+    if ([...this.players.keys()].every(p => playersWhoPicked.includes(p))) {
       this.reveal();
     } else {
       this.sendSummary();
     }
   };
-
-  onDisconnection = id => {
-    this.players.delete(id);
-
-    this.sendSummary();
-  };
-
 
 }
 

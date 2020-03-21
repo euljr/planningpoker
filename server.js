@@ -12,6 +12,12 @@ io.on('connection', (socket) => {
   socket.on('new', () => {
     new Game(socket);
   });
+
+  socket.on('join', room => {
+    if (Game.games.has(room)) {
+      Game.games.get(room).addPlayer(socket);
+    }
+  });
 });
 
 app.prepare().then(() => {
